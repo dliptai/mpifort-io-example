@@ -84,7 +84,7 @@ module utils
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-    disp = 2*record_marker + sizeof(header)
+    disp = 2*record_marker + STORAGE_SIZE(header)/8
 
   end subroutine write_header
 
