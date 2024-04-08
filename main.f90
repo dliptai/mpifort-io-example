@@ -4,7 +4,6 @@ program Main
 
   implicit none
 
-  integer(kind=MPI_OFFSET_KIND) :: disp
   integer :: ierr, array_view
   integer :: i,j,k, ranki
   real(8) :: header, header_new(1)
@@ -32,8 +31,8 @@ program Main
     end do
   end do
 
-  call write_header(filename, [header], disp)
-  call write_array_mpi(filename, xyz, disp, array_view)
+  call write_header(filename, [header])
+  call write_array_mpi(filename, xyz, array_view)
 
   ! put junk in array
   xyz = -1.0
@@ -47,7 +46,7 @@ program Main
 
   call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-  call read_array_mpi(filename, xyz, disp, array_view)
+  call read_array_mpi(filename, xyz, array_view)
 
   do ranki = 0, nprocs-1
     if (myrank == ranki) then
@@ -66,6 +65,7 @@ program Main
 
   if (myrank==0) then
     print*, 'Great successsss'
+    print*, 'bytes read', bytes_read, 'bytes written', bytes_written
   endif
 
   call MPI_FINALIZE(ierr)

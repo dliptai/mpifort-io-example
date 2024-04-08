@@ -3,6 +3,11 @@ module utils
 
   implicit none
 
+  integer(kind=MPI_OFFSET_KIND) :: bytes_read = 0
+  integer(kind=MPI_OFFSET_KIND) :: bytes_written = 0
+
+  integer, parameter :: record_marker = 4
+
   integer :: myrank, nprocs
   integer :: nx, ny, nz
   integer :: is, ie, js, je, ks, ke
@@ -69,11 +74,9 @@ module utils
 
   end subroutine set_array_view
 
-  subroutine write_header(filename, header, disp)
+  subroutine write_header(filename, header)
     character(len=*), intent(in) :: filename
     real(8), intent(in) :: header(:)
-    integer(kind=MPI_OFFSET_KIND), intent(out) :: disp
-    integer, parameter :: record_marker = 4
     integer :: un, ierr
 
     if (myrank == 0) then
@@ -84,7 +87,7 @@ module utils
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-    disp = 2*record_marker + STORAGE_SIZE(header)/8
+    bytes_written = bytes_written + (2*record_marker + storage_size(header)/8)
 
   end subroutine write_header
 
@@ -97,17 +100,19 @@ module utils
 
   end function total_elements
 
-  subroutine write_array_mpi(filename, buffer, disp, array_view)
+  subroutine write_array_mpi(filename, buffer, array_view)
     character(len=*), intent(in) :: filename
     real(8), intent(in) :: buffer(:,:,:)
-    integer(kind=MPI_OFFSET_KIND), intent(in) :: disp
     integer, intent(in) :: array_view
     integer :: file, status(MPI_STATUS_SIZE), ierr
+    INTEGER(KIND=MPI_ADDRESS_KIND) :: extent
 
     ! Write the array
     call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_WRONLY + MPI_MODE_CREATE, MPI_INFO_NULL, file, ierr)
-    call mpi_file_set_view(file, disp, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_set_view(file, bytes_written, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
     call mpi_file_write_all(file, buffer, total_elements(buffer), MPI_DOUBLE_PRECISION, status, ierr)
+    call mpi_file_get_type_extent(file, array_view, extent, ierr)
+    bytes_written = bytes_written + extent
     call mpi_file_close(file, ierr)
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
@@ -124,18 +129,22 @@ module utils
     close(un)
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
+    bytes_read = bytes_read + (2*record_marker + storage_size(header_new)/8)
+
   end subroutine read_header
 
-  subroutine read_array_mpi(filename, buffer, disp, array_view)
+  subroutine read_array_mpi(filename, buffer, array_view)
     character(len=*), intent(in) :: filename
     real(8), intent(out) :: buffer(:,:,:)
-    integer(kind=MPI_OFFSET_KIND), intent(in) :: disp
     integer, intent(in) :: array_view
     integer :: file, status(MPI_STATUS_SIZE), ierr
+    INTEGER(KIND=MPI_ADDRESS_KIND) :: extent
 
     call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_RDONLY, MPI_INFO_NULL, file, ierr)
-    call mpi_file_set_view(file, disp, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_set_view(file, bytes_read, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
     call mpi_file_read_all(file, buffer, total_elements(buffer), MPI_DOUBLE_PRECISION, status, ierr)
+    call mpi_file_get_type_extent(file, array_view, extent, ierr)
+    bytes_read = bytes_read + extent
     call mpi_file_close(file, ierr)
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
