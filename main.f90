@@ -36,9 +36,11 @@ program Main
 
   call write_header(filename, header)
   call write_array_mpi(filename, x1, array_view)
+  call write_array_mpi(filename, x2, array_view)
 
   ! put junk in array
   x1 = -1.0
+  x2 = -1.0
 
   ! -------------- Now read back the same file -----------------------------------------
 
@@ -52,6 +54,7 @@ program Main
   call mpi_barrier(MPI_COMM_WORLD, ierr)
 
   call read_array_mpi(filename, x1, array_view)
+  call read_array_mpi(filename, x2, array_view)
 
   do ranki = 0, nprocs-1
     if (myrank == ranki) then
@@ -59,7 +62,10 @@ program Main
         do j = js,je
           do k = ks,ke
             if (abs(x1(i,j,k) - (100*i + 10*j + k)) > 1e-14) then
-              print*, 'Rank ', myrank, ' has a problem at ', i, j, k, x1(i,j,k)
+              print*, 'Rank ', myrank, ' x1 has a problem at ', i, j, k, x1(i,j,k)
+            end if
+            if (abs(x2(i,j,k) + (100*i + 10*j + k)) > 1e-14) then
+              print*, 'Rank ', myrank, ' x2 has a problem at ', i, j, k, x2(i,j,k)
             end if
           end do
         end do
