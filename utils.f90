@@ -87,7 +87,7 @@ module utils
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-    bytes_written = bytes_written + (2*record_marker + storage_size(header)/8)
+    bytes_written = bytes_written + (2*record_marker + sizeof(header))
 
   end subroutine write_header
 
@@ -119,17 +119,20 @@ module utils
 
   end subroutine write_array_mpi
 
-  subroutine read_header(filename, header_new)
+  subroutine read_header(filename, header)
     character(len=*), intent(in) :: filename
-    real(8), intent(out) :: header_new(:)
+    real(8), intent(out) :: header(:)
     integer :: ierr, un
 
+    ! Put some junk in the header to make sure it's overwritten
+    header = -1.0
+
     open(newunit=un, file=filename, status='old', form='unformatted', action='read')
-    read(un) header_new
+    read(un) header
     close(un)
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-    bytes_read = bytes_read + (2*record_marker + storage_size(header_new)/8)
+    bytes_read = bytes_read + (2*record_marker + sizeof(header))
 
   end subroutine read_header
 
