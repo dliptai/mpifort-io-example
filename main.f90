@@ -6,10 +6,13 @@ program Main
 
   integer :: ierr, array_view
   integer :: i,j,k, ranki
-  real(8), dimension(3) :: header, header_old
+  real(8) :: header(3) = [1.,2.,3.]
+  integer, parameter :: nhead = size(header)
+  real(8), dimension(nhead) :: header_old
   character(len=*), parameter :: filename = 'output.dat'
   real(8), allocatable, dimension(:,:,:) :: x1, x2
   real(8), external :: xfunc
+  logical :: legacy = .false.
 
   call init_mpi
 
@@ -34,9 +37,9 @@ program Main
     end do
   end do
 
-  call write_header(filename, header)
-  call write_array_mpi(filename, x1, array_view)
-  call write_array_mpi(filename, x2, array_view)
+  call write_header(filename, header, legacy)
+  call write_array_mpi(filename, x1, array_view, legacy)
+  call write_array_mpi(filename, x2, array_view, legacy)
 
   ! put junk in array
   x1 = -1.0
@@ -44,17 +47,19 @@ program Main
 
   ! -------------- Now read back the same file -----------------------------------------
 
-  header_old = header
-  call read_header(filename, header)
+  call is_file_legacy(filename, legacy)
 
-  do i = 1,3
+  header_old = header
+  call read_header(filename, header, legacy)
+
+  do i = 1,nhead
     if (abs(header(i) - header_old(i)) > 1e-14) print*, 'rank', myrank, 'Header mismatch: ', header(i), header_old(i)
   end do
 
   call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-  call read_array_mpi(filename, x1, array_view)
-  call read_array_mpi(filename, x2, array_view)
+  call read_array_mpi(filename, x1, array_view, legacy)
+  call read_array_mpi(filename, x2, array_view, legacy)
 
   do ranki = 0, nprocs-1
     if (myrank == ranki) then
@@ -62,10 +67,10 @@ program Main
         do j = js,je
           do k = ks,ke
             if (abs(x1(i,j,k) - xfunc(i,j,k)) > 1e-14) then
-              print*, 'Rank ', myrank, ' x1 has a problem at ', i, j, k, x1(i,j,k)
+              print*, 'Rank ', myrank, ' x1 has a problem at ', i, j, k, x1(i,j,k), abs(x1(i,j,k) - xfunc(i,j,k))
             end if
             if (abs(x2(i,j,k) + xfunc(i,j,k)) > 1e-14) then
-              print*, 'Rank ', myrank, ' x2 has a problem at ', i, j, k, x2(i,j,k)
+              print*, 'Rank ', myrank, ' x2 has a problem at ', i, j, k, x2(i,j,k), abs(x2(i,j,k) + xfunc(i,j,k))
             end if
           end do
         end do
@@ -75,8 +80,7 @@ program Main
   end do
 
   if (myrank==0) then
-    print*, 'Great successsss'
-    print*, 'bytes read', bytes_read, 'bytes written', bytes_written
+    print*, 'bytes read', bytes_read, ', bytes written', bytes_written
   endif
 
   call MPI_FINALIZE(ierr)

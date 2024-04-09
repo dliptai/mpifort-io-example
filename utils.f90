@@ -6,7 +6,8 @@ module utils
   integer(kind=MPI_OFFSET_KIND) :: bytes_read = 0
   integer(kind=MPI_OFFSET_KIND) :: bytes_written = 0
 
-  integer, parameter :: record_marker = 4
+  ! Assuming fortran record markers are the size of an integer
+  integer, parameter :: record_marker = sizeof(int(0,kind=4))
 
   integer :: myrank, nprocs
   integer :: nx, ny, nz
@@ -74,20 +75,57 @@ module utils
 
   end subroutine set_array_view
 
-  subroutine write_header(filename, header)
+  ! subroutine to try reading the header in sequential format. If it succeeds it should be a legacy file
+  subroutine is_file_legacy(filename, legacy)
+    character(len=*), intent(in) :: filename
+    logical, intent(out) :: legacy
+    real(8) :: header
+    integer :: ierr, un
+
+    ! Try reading the header in sequential format
+    open(newunit=un, file=filename, status='old', form='unformatted', action='read', access='sequential')
+    read(un, iostat=ierr) header
+    close(un)
+
+    if (ierr /= 0) then
+      legacy = .false.
+    else
+      legacy = .true.
+    end if
+
+    if (myrank == 0) print *, 'Legacy file =', legacy
+
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
+
+  end subroutine is_file_legacy
+
+  subroutine write_header(filename, header, legacy)
     character(len=*), intent(in) :: filename
     real(8), intent(in) :: header(:)
+    logical, intent(in), optional :: legacy
+    logical :: islegacy = .false.
     integer :: un, ierr
+    if (present(legacy)) islegacy = legacy
 
     if (myrank == 0) then
-      open(newunit=un, file=filename, status='replace', form='unformatted', action='write')
+
+      if (islegacy) then
+        open(newunit=un, file=filename, status='replace', form='unformatted', action='write', access='sequential')
+      else
+        open(newunit=un, file=filename, status='replace', form='unformatted', action='write', access='stream')
+      end if
+
       write(un) header
       close(un)
     end if
 
-    call mpi_barrier(MPI_COMM_WORLD, ierr)
+    if (islegacy) then
+      bytes_written = bytes_written + (2*record_marker + sizeof(header))
+    else
+      bytes_written = bytes_written + sizeof(header)
+    end if
 
-    bytes_written = bytes_written + (2*record_marker + sizeof(header))
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
 
   end subroutine write_header
 
@@ -100,48 +138,87 @@ module utils
 
   end function total_elements
 
-  subroutine write_array_mpi(filename, buffer, array_view)
+  subroutine write_array_mpi(filename, buffer, array_view, legacy)
     character(len=*), intent(in) :: filename
     real(8), intent(in) :: buffer(:,:,:)
     integer, intent(in) :: array_view
+    logical, intent(in), optional :: legacy
+    logical :: islegacy = .false.
     integer :: file, status(MPI_STATUS_SIZE), ierr
     INTEGER(KIND=MPI_ADDRESS_KIND) :: extent
+    if (present(legacy)) islegacy = legacy
 
-    ! Write the array
+    if (islegacy) call write_fake_recordmarker(filename)
+
     call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_WRONLY + MPI_MODE_CREATE, MPI_INFO_NULL, file, ierr)
     call mpi_file_set_view(file, bytes_written, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
     call mpi_file_write_all(file, buffer, total_elements(buffer), MPI_DOUBLE_PRECISION, status, ierr)
     call mpi_file_get_type_extent(file, array_view, extent, ierr)
     bytes_written = bytes_written + extent
     call mpi_file_close(file, ierr)
-
     call mpi_barrier(MPI_COMM_WORLD, ierr)
+
+    if (islegacy) call write_fake_recordmarker(filename)
 
   end subroutine write_array_mpi
 
-  subroutine read_header(filename, header)
+  subroutine write_fake_recordmarker(filename)
+    character(len=*), intent(in) :: filename
+    integer :: un, ierr
+    integer(4) :: rm = -10
+
+    if (myrank == 0) then
+      open(newunit=un, file=filename, status='old', form='unformatted', action='write', access='stream', position='append')
+      write(un) rm
+      close(un)
+    end if
+
+    bytes_written = bytes_written + record_marker
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
+
+  end subroutine write_fake_recordmarker
+
+  subroutine read_header(filename, header, legacy)
     character(len=*), intent(in) :: filename
     real(8), intent(out) :: header(:)
+    logical, intent(in), optional :: legacy
+    logical :: islegacy = .false.
     integer :: ierr, un
+    if (present(legacy)) islegacy = legacy
 
     ! Put some junk in the header to make sure it's overwritten
     header = -1.0
 
-    open(newunit=un, file=filename, status='old', form='unformatted', action='read')
+    if (islegacy) then
+      open(newunit=un, file=filename, status='old', form='unformatted', action='read', access='sequential')
+    else
+      open(newunit=un, file=filename, status='old', form='unformatted', action='read', access='stream')
+    end if
+
     read(un) header
     close(un)
-    call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-    bytes_read = bytes_read + (2*record_marker + sizeof(header))
+    if (islegacy) then
+      bytes_read = bytes_read + (2*record_marker + sizeof(header))
+    else
+      bytes_read = bytes_read + sizeof(header)
+    end if
+
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
 
   end subroutine read_header
 
-  subroutine read_array_mpi(filename, buffer, array_view)
+  subroutine read_array_mpi(filename, buffer, array_view, legacy)
     character(len=*), intent(in) :: filename
     real(8), intent(out) :: buffer(:,:,:)
     integer, intent(in) :: array_view
+    logical, intent(in), optional :: legacy
+    logical :: islegacy = .false.
     integer :: file, status(MPI_STATUS_SIZE), ierr
     INTEGER(KIND=MPI_ADDRESS_KIND) :: extent
+    if (present(legacy)) islegacy = legacy
+
+    if (islegacy) bytes_read = bytes_read + record_marker
 
     call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_RDONLY, MPI_INFO_NULL, file, ierr)
     call mpi_file_set_view(file, bytes_read, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
@@ -149,8 +226,9 @@ module utils
     call mpi_file_get_type_extent(file, array_view, extent, ierr)
     bytes_read = bytes_read + extent
     call mpi_file_close(file, ierr)
-
     call mpi_barrier(MPI_COMM_WORLD, ierr)
+
+    if (islegacy) bytes_read = bytes_read + record_marker
 
   end subroutine read_array_mpi
 
