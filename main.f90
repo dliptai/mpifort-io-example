@@ -8,8 +8,8 @@ program Main
   integer :: i,j,k, ranki
   real(8), dimension(3) :: header, header_old
   character(len=*), parameter :: filename = 'output.dat'
-
   real(8), allocatable, dimension(:,:,:) :: x1, x2
+  real(8), external :: xfunc
 
   call init_mpi
 
@@ -28,8 +28,8 @@ program Main
   do i = is,ie
     do j = js,je
       do k = ks,ke
-        x1(i,j,k) = 100*i + 10*j + k
-        x2(i,j,k) = -(100*i + 10*j + k)
+        x1(i,j,k) = xfunc(i,j,k)
+        x2(i,j,k) = -xfunc(i,j,k)
       end do
     end do
   end do
@@ -61,10 +61,10 @@ program Main
       do i = is,ie
         do j = js,je
           do k = ks,ke
-            if (abs(x1(i,j,k) - (100*i + 10*j + k)) > 1e-14) then
+            if (abs(x1(i,j,k) - xfunc(i,j,k)) > 1e-14) then
               print*, 'Rank ', myrank, ' x1 has a problem at ', i, j, k, x1(i,j,k)
             end if
-            if (abs(x2(i,j,k) + (100*i + 10*j + k)) > 1e-14) then
+            if (abs(x2(i,j,k) + xfunc(i,j,k)) > 1e-14) then
               print*, 'Rank ', myrank, ' x2 has a problem at ', i, j, k, x2(i,j,k)
             end if
           end do
@@ -82,3 +82,11 @@ program Main
   call MPI_FINALIZE(ierr)
 
 end program Main
+
+real(8) function xfunc(i, j, k)
+  implicit none
+  integer, intent(in) :: i, j, k
+
+  xfunc = real(100*i + 10*j + k, kind=8)
+
+end function xfunc
