@@ -146,12 +146,14 @@ module utils
     logical :: islegacy = .false.
     integer :: file, status(MPI_STATUS_SIZE), ierr
     INTEGER(KIND=MPI_ADDRESS_KIND) :: extent
+    integer(kind=MPI_OFFSET_KIND) :: disp = 0
     if (present(legacy)) islegacy = legacy
 
     if (islegacy) call write_fake_recordmarker(filename)
 
-    call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_WRONLY + MPI_MODE_CREATE, MPI_INFO_NULL, file, ierr)
-    call mpi_file_set_view(file, bytes_written, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_WRONLY + MPI_MODE_CREATE + MPI_MODE_APPEND, MPI_INFO_NULL, file, ierr)
+    call mpi_file_get_position(file, disp, ierr)
+    call mpi_file_set_view(file, disp, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
     call mpi_file_write_all(file, buffer, total_elements(buffer), MPI_DOUBLE_PRECISION, status, ierr)
     call mpi_file_get_type_extent(file, array_view, extent, ierr)
     bytes_written = bytes_written + extent
