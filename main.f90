@@ -1,6 +1,8 @@
 program Main
   use mpi
   use utils
+  use io_write
+  use io_read
 
   implicit none
 
