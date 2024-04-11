@@ -38,7 +38,7 @@ contains
     integer :: ierr
     if (present(legacy)) islegacy = legacy
 
-    if (legacy) call read_fake_recordmarker(fh)
+    if (islegacy) call read_fake_recordmarker(fh)
 
     call mpi_file_set_view(fh, offset, MPI_INTEGER4, MPI_INTEGER4, 'native', MPI_INFO_NULL, ierr)
     call mpi_file_read_all(fh, header1, 1, MPI_INTEGER4, MPI_STATUS_IGNORE, ierr)
@@ -48,7 +48,7 @@ contains
     call mpi_file_read_all(fh, header2, 1, MPI_REAL8, MPI_STATUS_IGNORE, ierr)
     call update_offset(fh, MPI_REAL8)
 
-    if (legacy) call read_fake_recordmarker(fh)
+    if (islegacy) call read_fake_recordmarker(fh)
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 

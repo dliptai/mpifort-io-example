@@ -1,12 +1,10 @@
 module utils
   use mpi
+  use vars
 
   implicit none
 
   integer :: myrank, nprocs
-  integer :: nx, ny, nz
-  integer :: is, ie, js, je, ks, ke
-  integer :: is_global, ie_global, js_global, je_global, ks_global, ke_global
 
   contains
 
@@ -56,8 +54,7 @@ module utils
 
   end subroutine decompose_domain
 
-  subroutine create_type_mpi_array(type_mpi_array)
-    integer, intent(out) :: type_mpi_array
+  subroutine create_type_mpi_array
     integer :: ierr, sizes(3), subsizes(3), starts(3)
 
     sizes = [nx,ny,nz]

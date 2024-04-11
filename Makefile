@@ -13,7 +13,7 @@ endif
 TARGET = main
 
 # Source files
-SRCS = utils.f90 io_write.f90 io_read.f90 main.f90
+SRCS = vars.f90 utils.f90 io_write.f90 io_read.f90 io.f90 main.f90
 
 # Object files
 OBJS = $(SRCS:.f90=.o)

@@ -28,7 +28,7 @@ contains
     integer(kind=MPI_OFFSET_KIND) :: end_bytes
     if (present(legacy)) islegacy = legacy
 
-    if (legacy) call write_fake_recordmarker(fh)
+    if (islegacy) call write_fake_recordmarker(fh)
 
     call get_file_end(fh, end_bytes)
     call mpi_file_set_view(fh, end_bytes, MPI_INTEGER4, MPI_INTEGER4, 'native', MPI_INFO_NULL, ierr)
@@ -38,7 +38,7 @@ contains
     call mpi_file_set_view(fh, end_bytes, MPI_REAL8, MPI_REAL8, 'native', MPI_INFO_NULL, ierr)
     call mpi_file_write_all(fh, header2, 1, MPI_REAL8, MPI_STATUS_IGNORE, ierr)
 
-    if (legacy) call write_fake_recordmarker(fh)
+    if (islegacy) call write_fake_recordmarker(fh)
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
@@ -47,7 +47,7 @@ contains
   subroutine write_array_mpi(fh, buffer, type_mpi_array, legacy)
     use utils, only: total_elements, get_file_end
     integer, intent(in) :: fh
-    real(8), intent(in) :: buffer(:,:,:)
+    real(8), intent(in), allocatable :: buffer(:,:,:)
     integer, intent(in) :: type_mpi_array
     logical, intent(in), optional :: legacy
     logical :: islegacy = .false.
