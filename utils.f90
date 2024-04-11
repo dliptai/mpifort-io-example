@@ -3,8 +3,8 @@ module utils
 
   implicit none
 
-  integer(kind=MPI_OFFSET_KIND) :: bytes_read = 0
-  integer(kind=MPI_OFFSET_KIND) :: bytes_written = 0
+  integer :: ncall = 0
+  integer(kind=MPI_OFFSET_KIND) :: offset = 0
 
   ! Assuming fortran record markers are the size of an integer
   integer, parameter :: record_marker = sizeof(int(0,kind=4))
@@ -53,27 +53,27 @@ module utils
     if (mycoords(3) == dims(3) - 1) ke = nz - (ks_global - 1)
 
     if (myrank == 0) then
-      print*, 'Global domain: ', is_global, ie_global, js_global, je_global, ks_global, ke_global
+      write(*, '(A, 6I6)') 'Global domain:     ', is_global, ie_global, js_global, je_global, ks_global, ke_global
     endif
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
-    print*, 'Rank ', myrank, ' has domain ', is, ie, js, je, ks, ke
+    write(*, '(A, I3, A, 6I6)') 'Rank', myrank, ' has domain ', is, ie, js, je, ks, ke
 
   end subroutine decompose_domain
 
-  subroutine set_array_view(array_view)
-    integer, intent(out) :: array_view
+  subroutine create_type_mpi_array(type_mpi_array)
+    integer, intent(out) :: type_mpi_array
     integer :: ierr, sizes(3), subsizes(3), starts(3)
 
     sizes = [nx,ny,nz]
     subsizes = [ie-is+1,je-js+1,ke-ks+1]
     starts = [is-1,js-1,ks-1]
 
-    call mpi_type_create_subarray(3, sizes, subsizes, starts, MPI_ORDER_FORTRAN, MPI_DOUBLE_PRECISION, array_view, ierr)
-    call mpi_type_commit(array_view, ierr)
+    call mpi_type_create_subarray(3, sizes, subsizes, starts, MPI_ORDER_FORTRAN, MPI_DOUBLE_PRECISION, type_mpi_array, ierr)
+    call mpi_type_commit(type_mpi_array, ierr)
 
-  end subroutine set_array_view
+  end subroutine create_type_mpi_array
 
   ! subroutine to try reading the header in sequential format. If it succeeds it should be a legacy file
   subroutine is_file_legacy(filename, legacy)
@@ -99,36 +99,6 @@ module utils
 
   end subroutine is_file_legacy
 
-  subroutine write_header(filename, header, legacy)
-    character(len=*), intent(in) :: filename
-    real(8), intent(in) :: header(:)
-    logical, intent(in), optional :: legacy
-    logical :: islegacy = .false.
-    integer :: un, ierr
-    if (present(legacy)) islegacy = legacy
-
-    if (myrank == 0) then
-
-      if (islegacy) then
-        open(newunit=un, file=filename, status='replace', form='unformatted', action='write', access='sequential')
-      else
-        open(newunit=un, file=filename, status='replace', form='unformatted', action='write', access='stream')
-      end if
-
-      write(un) header
-      close(un)
-    end if
-
-    if (islegacy) then
-      bytes_written = bytes_written + (2*record_marker + sizeof(header))
-    else
-      bytes_written = bytes_written + sizeof(header)
-    end if
-
-    call mpi_barrier(MPI_COMM_WORLD, ierr)
-
-  end subroutine write_header
-
   ! a function to determine the total number of elements of a 3D array
   function total_elements(array) result(n)
     integer :: n
@@ -138,100 +108,179 @@ module utils
 
   end function total_elements
 
-  subroutine write_array_mpi(filename, buffer, array_view, legacy)
-    character(len=*), intent(in) :: filename
-    real(8), intent(in) :: buffer(:,:,:)
-    integer, intent(in) :: array_view
-    logical, intent(in), optional :: legacy
-    logical :: islegacy = .false.
-    integer :: file, status(MPI_STATUS_SIZE), ierr
-    INTEGER(KIND=MPI_ADDRESS_KIND) :: extent
-    integer(kind=MPI_OFFSET_KIND) :: disp = 0
-    if (present(legacy)) islegacy = legacy
+!------------------------------ Writing file ----------------------------------------------------------
 
-    if (islegacy) call write_fake_recordmarker(filename)
+  subroutine get_file_end(fh, end_bytes)
+    integer, intent(in) :: fh
+    integer :: ierr
+    integer(kind=MPI_OFFSET_KIND), intent(out) :: end_bytes
+    ! integer(kind=MPI_OFFSET_KIND) :: disp
 
-    call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_WRONLY + MPI_MODE_CREATE + MPI_MODE_APPEND, MPI_INFO_NULL, file, ierr)
-    call mpi_file_get_position(file, disp, ierr)
-    call mpi_file_set_view(file, disp, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
-    call mpi_file_write_all(file, buffer, total_elements(buffer), MPI_DOUBLE_PRECISION, status, ierr)
-    call mpi_file_get_type_extent(file, array_view, extent, ierr)
-    bytes_written = bytes_written + extent
-    call mpi_file_close(file, ierr)
-    call mpi_barrier(MPI_COMM_WORLD, ierr)
+    ! This may or may not be better than the commented bit below...
+    call mpi_file_sync(fh, ierr)
+    call MPI_File_get_size(fh, end_bytes, ierr)
 
-    if (islegacy) call write_fake_recordmarker(filename)
+    ! ! Reset view to default ("absolute" view in bytes)
+    ! call mpi_file_set_view(fh, 0_MPI_OFFSET_KIND, MPI_BYTE, MPI_BYTE, 'native', MPI_INFO_NULL, ierr)
 
-  end subroutine write_array_mpi
+    ! ! Move individual file positions to absolute end of file
+    ! call mpi_file_seek(fh, 0_MPI_OFFSET_KIND, MPI_SEEK_END, ierr)
+    ! call mpi_file_get_position(fh, disp, ierr)
+    ! call MPI_File_get_byte_offset(fh, disp, end_bytes, ierr)
 
-  subroutine write_fake_recordmarker(filename)
-    character(len=*), intent(in) :: filename
-    integer :: un, ierr
-    integer(4) :: rm = -10
+  end subroutine get_file_end
 
-    if (myrank == 0) then
-      open(newunit=un, file=filename, status='old', form='unformatted', action='write', access='stream', position='append')
-      write(un) rm
-      close(un)
-    end if
+  subroutine write_fake_recordmarker(fh)
+    integer, intent(in) :: fh
+    integer :: rm = -1 ! Assmuing record marker is the size of an integer
+    integer :: ierr
+    integer(kind=MPI_OFFSET_KIND) :: end_bytes
 
-    bytes_written = bytes_written + record_marker
-    call mpi_barrier(MPI_COMM_WORLD, ierr)
+    call get_file_end(fh, end_bytes)
+    call mpi_file_set_view(fh, end_bytes, MPI_INTEGER4, MPI_INTEGER4, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_write_all(fh, rm, 1, MPI_INTEGER4, MPI_STATUS_IGNORE, ierr)
 
   end subroutine write_fake_recordmarker
 
-  subroutine read_header(filename, header, legacy)
-    character(len=*), intent(in) :: filename
-    real(8), intent(out) :: header(:)
+  subroutine write_header(fh, header1, header2, legacy)
+    integer, intent(in) :: fh
+    integer, intent(in) :: header1
+    real(8), intent(in) :: header2
     logical, intent(in), optional :: legacy
     logical :: islegacy = .false.
-    integer :: ierr, un
+    integer :: ierr
+    integer(kind=MPI_OFFSET_KIND) :: end_bytes
     if (present(legacy)) islegacy = legacy
 
-    ! Put some junk in the header to make sure it's overwritten
-    header = -1.0
+    if (legacy) call write_fake_recordmarker(fh)
 
-    if (islegacy) then
-      open(newunit=un, file=filename, status='old', form='unformatted', action='read', access='sequential')
-    else
-      open(newunit=un, file=filename, status='old', form='unformatted', action='read', access='stream')
-    end if
+    call get_file_end(fh, end_bytes)
+    call mpi_file_set_view(fh, end_bytes, MPI_INTEGER4, MPI_INTEGER4, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_write_all(fh, header1, 1, MPI_INTEGER4, MPI_STATUS_IGNORE, ierr)
 
-    read(un) header
-    close(un)
+    call get_file_end(fh, end_bytes)
+    call mpi_file_set_view(fh, end_bytes, MPI_REAL8, MPI_REAL8, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_write_all(fh, header2, 1, MPI_REAL8, MPI_STATUS_IGNORE, ierr)
 
-    if (islegacy) then
-      bytes_read = bytes_read + (2*record_marker + sizeof(header))
-    else
-      bytes_read = bytes_read + sizeof(header)
-    end if
+    if (legacy) call write_fake_recordmarker(fh)
+
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
+
+  end subroutine write_header
+
+  subroutine write_array_mpi(fh, buffer, type_mpi_array, legacy)
+    integer, intent(in) :: fh
+    real(8), intent(in) :: buffer(:,:,:)
+    integer, intent(in) :: type_mpi_array
+    logical, intent(in), optional :: legacy
+    logical :: islegacy = .false.
+    integer :: status(MPI_STATUS_SIZE), ierr
+    integer(kind=MPI_OFFSET_KIND) :: end_bytes
+    if (present(legacy)) islegacy = legacy
+
+    ncall = ncall + 1
+
+    if (islegacy) call write_fake_recordmarker(fh)
+
+    call get_file_end(fh, end_bytes)
+    call mpi_file_set_view(fh, end_bytes, MPI_REAL8, type_mpi_array, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_write_all(fh, buffer, total_elements(buffer), MPI_REAL8, status, ierr)
+
+    if (islegacy) call write_fake_recordmarker(fh)
+
+  end subroutine write_array_mpi
+
+!---------------------- Reading file ----------------------------------------------------------------
+  subroutine update_offset(fh, dtype)
+    integer, intent(in) :: fh, dtype
+    integer :: ierr
+    integer(kind=MPI_OFFSET_KIND) :: bytes
+
+    ! get the number of bytes read
+    call mpi_file_get_type_extent(fh, dtype, bytes, ierr)
+    offset = offset + bytes
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
+
+  end subroutine update_offset
+
+  subroutine read_fake_recordmarker(fh)
+    integer, intent(in) :: fh
+    integer :: rm
+    integer :: ierr
+
+    call mpi_file_set_view(fh, offset, MPI_INTEGER4, MPI_INTEGER4, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_read_all(fh, rm, 1, MPI_INTEGER4, MPI_STATUS_IGNORE, ierr)
+    call update_offset(fh, MPI_INTEGER4)
+
+  end subroutine read_fake_recordmarker
+
+  subroutine read_header(fh, header1, header2, legacy)
+    integer, intent(in) :: fh
+    integer, intent(out) :: header1
+    real(8), intent(out) :: header2
+    logical, intent(in), optional :: legacy
+    logical :: islegacy = .false.
+    integer :: ierr
+    if (present(legacy)) islegacy = legacy
+
+    if (legacy) call read_fake_recordmarker(fh)
+
+    call mpi_file_set_view(fh, offset, MPI_INTEGER4, MPI_INTEGER4, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_read_all(fh, header1, 1, MPI_INTEGER4, MPI_STATUS_IGNORE, ierr)
+    call update_offset(fh, MPI_INTEGER4)
+
+    call mpi_file_set_view(fh, offset, MPI_REAL8, MPI_REAL8, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_read_all(fh, header2, 1, MPI_REAL8, MPI_STATUS_IGNORE, ierr)
+    call update_offset(fh, MPI_REAL8)
+
+    if (legacy) call read_fake_recordmarker(fh)
 
     call mpi_barrier(MPI_COMM_WORLD, ierr)
 
   end subroutine read_header
 
-  subroutine read_array_mpi(filename, buffer, array_view, legacy)
-    character(len=*), intent(in) :: filename
+  subroutine read_array_mpi(fh, buffer, type_mpi_array, legacy)
+    integer, intent(in) :: fh
     real(8), intent(out) :: buffer(:,:,:)
-    integer, intent(in) :: array_view
+    integer, intent(in) :: type_mpi_array
     logical, intent(in), optional :: legacy
     logical :: islegacy = .false.
-    integer :: file, status(MPI_STATUS_SIZE), ierr
-    INTEGER(KIND=MPI_ADDRESS_KIND) :: extent
+    integer :: status(MPI_STATUS_SIZE), ierr
     if (present(legacy)) islegacy = legacy
 
-    if (islegacy) bytes_read = bytes_read + record_marker
+    ! "read" fake record marker
+    if (islegacy) call read_fake_recordmarker(fh)
 
-    call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_RDONLY, MPI_INFO_NULL, file, ierr)
-    call mpi_file_set_view(file, bytes_read, MPI_DOUBLE_PRECISION, array_view, 'native', MPI_INFO_NULL, ierr)
-    call mpi_file_read_all(file, buffer, total_elements(buffer), MPI_DOUBLE_PRECISION, status, ierr)
-    call mpi_file_get_type_extent(file, array_view, extent, ierr)
-    bytes_read = bytes_read + extent
-    call mpi_file_close(file, ierr)
-    call mpi_barrier(MPI_COMM_WORLD, ierr)
+    call mpi_file_set_view(fh, offset, MPI_DOUBLE_PRECISION, type_mpi_array, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_read_all(fh, buffer, total_elements(buffer), MPI_DOUBLE_PRECISION, status, ierr)
+    call update_offset(fh, type_mpi_array)
 
-    if (islegacy) bytes_read = bytes_read + record_marker
+    ! "read" fake record marker
+    if (islegacy) call read_fake_recordmarker(fh)
 
   end subroutine read_array_mpi
+
+  subroutine open_file_read(filename, fh)
+    character(len=*), intent(in) :: filename
+    integer, intent(out) :: fh
+    integer :: ierr
+    call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_RDONLY, MPI_INFO_NULL, fh, ierr)
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
+  end subroutine open_file_read
+
+  subroutine open_file_write(filename, fh)
+    character(len=*), intent(in) :: filename
+    integer, intent(out) :: fh
+    integer :: ierr
+    call mpi_file_open(MPI_COMM_WORLD, filename, MPI_MODE_RDWR + MPI_MODE_APPEND, MPI_INFO_NULL, fh, ierr)
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
+  end subroutine open_file_write
+
+  subroutine close_file(fh)
+    integer, intent(inout) :: fh
+    integer :: ierr
+    call mpi_file_close(fh, ierr)
+    call mpi_barrier(MPI_COMM_WORLD, ierr)
+  end subroutine close_file
 
 end module utils
