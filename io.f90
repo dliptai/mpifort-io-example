@@ -30,6 +30,7 @@ contains
     integer :: fh
 
     call open_file_read(filename, fh)
+    offset = 0
     call read_fake_recordmarker(fh)
     call read_header(fh, tn, time)
     call read_fake_recordmarker(fh)
