@@ -4,8 +4,8 @@ module utils
   implicit none
 
   integer :: myrank, nprocs
-  integer :: nx, ny, nz
-  integer :: is, ie, js, je, ks, ke
+  integer :: nx, ny, nz, nmu
+  integer :: is, ie, js, je, ks, ke, mus, mue
   integer :: is_global, ie_global, js_global, je_global, ks_global, ke_global
 
   contains
@@ -58,13 +58,13 @@ module utils
 
   subroutine create_type_mpi_array(type_mpi_array)
     integer, intent(out) :: type_mpi_array
-    integer :: ierr, sizes(3), subsizes(3), starts(3)
+    integer :: ierr, sizes(4), subsizes(4), starts(4)
 
-    sizes = [nx,ny,nz]
-    subsizes = [ie-is+1,je-js+1,ke-ks+1]
-    starts = [is-1,js-1,ks-1]
+    sizes = [nmu,nx,ny,nz]
+    subsizes = [mue-mus+1,ie-is+1,je-js+1,ke-ks+1]
+    starts = [mus-1,is-1,js-1,ks-1]
 
-    call mpi_type_create_subarray(3, sizes, subsizes, starts, MPI_ORDER_FORTRAN, MPI_DOUBLE_PRECISION, type_mpi_array, ierr)
+    call mpi_type_create_subarray(4, sizes, subsizes, starts, MPI_ORDER_FORTRAN, MPI_INTEGER4, type_mpi_array, ierr)
     call mpi_type_commit(type_mpi_array, ierr)
 
   end subroutine create_type_mpi_array

@@ -65,4 +65,20 @@ contains
 
   end subroutine write_array_mpi
 
+  subroutine write_int4_array_4d(fh, buffer, type_mpi_array)
+    use utils, only: total_elements, get_file_end
+    integer, intent(in) :: fh
+    integer, intent(in) :: buffer(:,:,:,:)
+    integer, intent(in) :: type_mpi_array
+    integer :: status(MPI_STATUS_SIZE), ierr, ntot
+    integer(kind=MPI_OFFSET_KIND) :: end_bytes
+
+    ntot = size(buffer, 1) * size(buffer, 2) * size(buffer, 3) * size(buffer, 4)
+
+    call get_file_end(fh, end_bytes)
+    call mpi_file_set_view(fh, end_bytes, MPI_INTEGER4, type_mpi_array, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_write_all(fh, buffer, ntot, MPI_INTEGER4, status, ierr)
+
+  end subroutine write_int4_array_4d
+
 end module io_write

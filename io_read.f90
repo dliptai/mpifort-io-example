@@ -76,4 +76,19 @@ contains
 
   end subroutine read_array_mpi
 
+  subroutine read_int4_array_4d(fh, buffer, type_mpi_array)
+    use utils, only: total_elements
+    integer, intent(in) :: fh
+    integer, intent(out) :: buffer(:,:,:,:)
+    integer, intent(in) :: type_mpi_array
+    integer :: status(MPI_STATUS_SIZE), ierr, ntot
+
+    ntot = size(buffer, 1) * size(buffer, 2) * size(buffer, 3) * size(buffer, 4)
+
+    call mpi_file_set_view(fh, offset, MPI_INTEGER4, type_mpi_array, 'native', MPI_INFO_NULL, ierr)
+    call mpi_file_read_all(fh, buffer, ntot, MPI_INTEGER4, status, ierr)
+    call update_offset(fh, type_mpi_array)
+
+  end subroutine read_int4_array_4d
+
 end module io_read
