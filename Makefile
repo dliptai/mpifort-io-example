@@ -27,4 +27,4 @@ $(TARGET): $(OBJS)
 	$(FC) $(FCFLAGS) -c $<
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(OBJS) $(TARGET) $(SRCS:.f90=.mod)
